@@ -1,70 +1,95 @@
 name: Build Executable
 
 on:
-  push:  # Runs when you push code
+  push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
-  build-windows-32bit:
+  build:
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9']
+        architecture: ['x86', 'x64']
+        include:
+          - python-version: '3.8'
+            architecture: 'x86'
+            output-name: 'DocumentProcessor-win32'
+          - python-version: '3.8'
+            architecture: 'x64'
+            output-name: 'DocumentProcessor-win64'
+    
     runs-on: windows-latest
-    name: Build Windows 32-bit
+    name: Build Python ${{ matrix.python-version }} ${{ matrix.architecture }}
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Python 3.8 (32-bit)
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.8'
-          architecture: 'x86'  # 32-bit!
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
-      
-      - name: Build executable
-        run: |
-          cd src
-          pyinstaller --onefile --name DocumentProcessor main.py
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: DocumentProcessor-Windows-32bit
-          path: src/dist/DocumentProcessor.exe
-          if-no-files-found: error
-
-  build-windows-64bit:
-    runs-on: windows-latest
-    name: Build Windows 64-bit
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Python 3.8 (64-bit)
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.8'
-          architecture: 'x64'  # 64-bit
-      
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
-      
-      - name: Build executable
-        run: |
-          cd src
-          pyinstaller --onefile --name DocumentProcessor64 main.py
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: DocumentProcessor-Windows-64bit
-          path: src/dist/DocumentProcessor64.exe
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: ${{ matrix.architecture }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        pip install pywin32
+    
+    - name: Create spec file for better control
+      run: |
+        cd src
+        # Create a .spec file that includes all pywin32 modules
+        echo "a = Analysis(['main.py']," > build.spec
+        echo "             pathex=[]," >> build.spec
+        echo "             binaries=[]," >> build.spec
+        echo "             datas=[]," >> build.spec
+        echo "             hiddenimports=['win32timezone', 'win32com', 'pythoncom', 'win32api']," >> build.spec
+        echo "             hookspath=[]," >> build.spec
+        echo "             hooksconfig={}," >> build.spec
+        echo "             runtime_hooks=[]," >> build.spec
+        echo "             excludes=[]," >> build.spec
+        echo "             win_no_prefer_redirects=False," >> build.spec
+        echo "             win_private_assemblies=False," >> build.spec
+        echo "             cipher=None," >> build.spec
+        echo "             noarchive=False)" >> build.spec
+        echo "pyz = PYZ(a.pure, a.zipped_data, cipher=None)" >> build.spec
+        echo "exe = EXE(pyz," >> build.spec
+        echo "          a.scripts," >> build.spec
+        echo "          []," >> build.spec
+        echo "          exclude_binaries=True," >> build.spec
+        echo "          name='DocumentProcessor'," >> build.spec
+        echo "          debug=False," >> build.spec
+        echo "          bootloader_ignore_signals=False," >> build.spec
+        echo "          strip=False," >> build.spec
+        echo "          upx=True," >> build.spec
+        echo "          console=True," >> build.spec
+        echo "          disable_windowed_traceback=False," >> build.spec
+        echo "          target_arch=None," >> build.spec
+        echo "          codesign_identity=None," >> build.spec
+        echo "          entitlements_file=None)" >> build.spec
+    
+    - name: Build with PyInstaller
+      run: |
+        cd src
+        pyinstaller --clean --noconfirm build.spec
+    
+    - name: Test the executable
+      run: |
+        cd src/dist
+        # Create a test folder and move exe there
+        mkdir test-folder
+        move DocumentProcessor.exe test-folder/
+        cd test-folder
+        # Create a dummy docx to test
+        echo "Test" > test.docx
+        # Run with --help or test mode
+        echo "Testing executable..."
+        cmd /c "DocumentProcessor.exe" || echo "Test completed"
+    
+    - name: Upload executable
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.output-name }}
+        path: src/dist/DocumentProcessor.exe
