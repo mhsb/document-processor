@@ -1,0 +1,143 @@
+import win32com.client as win32
+import os
+import traceback
+
+import win32com.client.gencache
+import shutil, os
+
+# Force rebuild of the COM cache if broken
+gen_py = os.path.join(os.environ.get("LOCALAPPDATA"), "Temp", "gen_py")
+if os.path.exists(gen_py):
+    shutil.rmtree(gen_py)
+
+win32com.client.gencache.Rebuild()
+
+# Built-in style IDs (language-independent)
+WD_STYLE_FOOTNOTE_TEXT = -5
+WD_STYLE_FOOTNOTE_REFERENCE = -6
+
+def cm_to_pt(cm):
+    return cm * 28.35
+
+def apply_page_setup_to_all_sections(doc, width_cm, height_cm,
+                                     margin_left, margin_right, margin_top, margin_bottom):
+    for sec in doc.Sections:
+        ps = sec.PageSetup
+        ps.PageWidth = cm_to_pt(width_cm)
+        ps.PageHeight = cm_to_pt(height_cm)
+        ps.LeftMargin = cm_to_pt(margin_left)
+        ps.RightMargin = cm_to_pt(margin_right)
+        ps.TopMargin = cm_to_pt(margin_top)
+        ps.BottomMargin = cm_to_pt(margin_bottom)
+
+def set_footnote_styles(doc, size_pt):
+    try:
+        # Use built-in style IDs to avoid localization issues
+        st = doc.Styles(WD_STYLE_FOOTNOTE_TEXT).Font
+        st.Size = size_pt
+        # For Persian/Arabic (complex script) font size
+        try:
+            st.SizeBi = size_pt
+        except Exception:
+            pass
+
+        sr = doc.Styles(WD_STYLE_FOOTNOTE_REFERENCE).Font
+        sr.Size = size_pt
+        try:
+            sr.SizeBi = size_pt
+        except Exception:
+            pass
+    except Exception as e:
+        print("! Could not adjust footnote styles:", e)
+
+def force_apply_footnote_size(doc, size_pt):
+    # Some documents have direct formatting that overrides style;
+    # clear it and reapply size, including SizeBi for RTL scripts.
+    for fn in doc.Footnotes:
+        rng = fn.Range
+        # Clear direct character formatting (method availability varies by version)
+        cleared = False
+        try:
+            # Best method (Word 2010+)
+            rng.ClearCharacterDirectFormatting()
+            cleared = True
+        except Exception:
+            try:
+                # Fallback
+                rng.Font.Reset()
+                cleared = True
+            except Exception:
+                pass
+
+        # Apply size (normal + complex script)
+        try:
+            rng.Font.Size = size_pt
+        except Exception:
+            pass
+        try:
+            rng.Font.SizeBi = size_pt
+        except Exception:
+            pass
+
+def process_document(word, in_path, out_docx, out_pdf,
+                     width_cm=11, height_cm=23,
+                     margin_left=0.5, margin_right=0.5,
+                     margin_top=0.6, margin_bottom=0.6,
+                     footnote_font_size=7):
+    # Open
+    doc = word.Documents.Open(in_path)
+
+    # Page setup across all sections
+    apply_page_setup_to_all_sections(
+        doc, width_cm, height_cm, margin_left, margin_right, margin_top, margin_bottom
+    )
+
+    # Footnotes: set styles + force apply on existing ranges
+    set_footnote_styles(doc, footnote_font_size)
+    force_apply_footnote_size(doc, footnote_font_size)
+
+    # Save DOCX
+    doc.SaveAs(out_docx)
+
+    # Save PDF (17 = wdFormatPDF)
+    doc.SaveAs(out_pdf, FileFormat=17)
+
+    # Close
+    doc.Close(False)
+
+def main():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    input_folder = os.path.join(base_dir)
+    output_folder = os.path.join(base_dir)
+
+    files = [f for f in os.listdir(input_folder) if f.lower().endswith(".docx")]
+    total = len(files)
+    if total == 0:
+        print("No .docx files found in 'mabda'.")
+        return
+
+    # Start Word once
+    word = win32.gencache.EnsureDispatch('Word.Application')
+    word.Visible = False
+
+    try:
+        for idx, filename in enumerate(files, start=1):
+            in_path = os.path.join(input_folder, filename)
+            name, _ = os.path.splitext(filename)
+            out_docx = os.path.join(output_folder, f"{name}_mobile.docx")
+            out_pdf = os.path.join(output_folder, f"{name}_mobile.pdf")
+
+            print(f"[{idx}/{total}] Processing: {filename}")
+            try:
+                process_document(word, in_path, out_docx, out_pdf)
+            except Exception as doc_err:
+                print(f"! Failed on {filename}: {doc_err}")
+                traceback.print_exc()
+    finally:
+        # Quit Word even if something goes wrong
+        word.Quit()
+
+    print("✅ All files processed. Check the 'maqsad' folder.")
+
+if __name__ == "__main__":
+    main()
